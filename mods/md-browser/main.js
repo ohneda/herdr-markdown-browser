@@ -4,7 +4,7 @@
 // - { file, on, overlay }: the file's right-click menu, as a popup.
 // - nothing: a panel listing the Markdown files around the focused pane (see list.js).
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, TextView } from "gpui-base";
+import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import { props, readTextFile, watchFolder, theme, panes, focused, run, notify, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
 import { openDefault } from "./open.js";
 import { MARKDOWN, LIMIT, location, markdownFiles, join } from "./list.js";
@@ -18,6 +18,11 @@ const SHOW = "md-browser.show";
 const LAST = "md-browser.last";
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
 const lastByTab = () => { const v = shared(LAST); return v && typeof v === "object" ? v : {}; };
+// The preview a click in the list replaces: the tab's focused one, else its last, else any.
+function tabPreview(tab) {
+  const previews = panes().filter((p) => p.tab === tab && p.mod === "md-browser");
+  return previews.find((p) => p.focused) ?? previews.find((p) => p.pane === lastByTab()[tab]) ?? previews[0] ?? null;
+}
 // What decides the list besides Markdown files themselves.
 const IGNORES = /(^|[\\/])\.gitignore$/;
 
@@ -145,9 +150,7 @@ export default class MdBrowser extends View {
   // closing it ends its tasks).
   async preview(file, on, cx, newPane = false) {
     const tab = focused()?.tab;
-    const previews = panes().filter((p) => p.tab === tab && p.mod === "md-browser");
-    const old = newPane ? null
-      : previews.find((p) => p.focused) ?? previews.find((p) => p.pane === lastByTab()[tab]) ?? previews[0];
+    const old = newPane ? null : tabPreview(tab);
     const slot = old && shared(SLOTS)?.[old.pane];
     if (slot) return setShared(SHOW, { ...(shared(SHOW) ?? {}), [slot]: { file, on } });
 
@@ -165,7 +168,8 @@ export default class MdBrowser extends View {
     slots[fresh.pane] = fresh.slot;
     const kept = new Set(Object.values(slots));
     setShared(SLOTS, slots);
-    setShared(SHOW, Object.fromEntries(Object.entries(shared(SHOW) ?? {}).filter(([s]) => kept.has(s))));
+    // Its file too, so the list can mark it.
+    setShared(SHOW, { ...Object.fromEntries(Object.entries(shared(SHOW) ?? {}).filter(([s]) => kept.has(s))), [fresh.slot]: { file, on } });
     setShared(LAST, Object.fromEntries(Object.entries(lastByTab()).filter(([, pane]) => alive.has(pane))));
     if (!old) return;
     run("pane.focus", { pane: fresh.pane });
@@ -178,6 +182,9 @@ export default class MdBrowser extends View {
   // changes (another machine's: every 10 s).
   initList(cx) {
     this.context = undefined;
+    this.query = "";
+    this.search = InputState.new({ placeholder: "Filter" });
+    this.search.on("change", (_e, cx) => { this.query = this.search.value(); cx.notify(); });
     this.refreshList(cx);
     cx.timer.every(10000, (cx) => { if (this.on) this.refreshList(cx); });
   }
@@ -295,34 +302,45 @@ export default class MdBrowser extends View {
     const t = theme();
     // The popup's height: 12 + 32 per item (Preview in new pane, Open in Default app).
     const height = 12 + 32 * 2;
-    const rows = this.files.slice(0, LIMIT).map((rel) => {
+    // Every word of the filter, anywhere in the path.
+    const words = this.query.toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = words.length ? this.files.filter((rel) => words.every((w) => rel.toLowerCase().includes(w))) : this.files;
+    // The file a click would replace, marked.
+    const target = tabPreview(focused()?.tab), current = target && shown(shared(SLOTS)?.[target.pane]);
+    const rows = matches.slice(0, LIMIT).map((rel) => {
       const cut = Math.max(rel.lastIndexOf("/"), rel.lastIndexOf("\\"));
       const file = join(this.root, rel);
+      const on = current?.file === file && (current.on ?? null) === this.on;
       return h_flex().id(`mow-file-${rel}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
-        .hover((s) => s.bg(t.hover))
+        .when(on, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(on ? t.selected : t.hover))
         .on_click((_e, cx) => cx.spawn((cx) => this.queuePreview(file, this.on, cx)))
         .on_mouse_down("right", (_e, cx) => {
           cx.stop_propagation();
           openOverlay({ mod: "md-browser", kind: "popup", height, props: { file, on: this.on } });
         })
-        .child(div().min_w(0).truncate().child(rel.slice(cut + 1)))
+        .child(div().min_w(0).truncate().when(on, (el) => el.font_semibold()).child(rel.slice(cut + 1)))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(cut < 0 ? "" : rel.slice(0, cut)));
     });
     const empty = this.listError || (this.loading && !this.files.length ? "Loading…"
-      : !this.cwd ? "No folder" : !this.files.length ? "No Markdown files" : null);
+      : !this.cwd ? "No folder" : !this.files.length ? "No Markdown files" : !matches.length ? "No matches" : null);
+    const folder = this.root?.split(/[\\/]/).filter(Boolean).pop() ?? (this.root ? "/" : "");
     return v_flex().id("md-browser-list").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Markdown"))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim)
-          .child(this.root?.split(/[\\/]/).filter(Boolean).pop() ?? (this.root ? "/" : "")))
+          .child(this.on && folder ? `${this.on}: ${folder}` : folder))
         .child(div().id("mow-refresh").flex_none().px(4).rounded(5).text_color(t.dim).cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => this.refreshList(cx))
           .child("↻")))
+      .child(div().id("mow-filter").flex_none().mx(6).mt(6).h(30).px(10).flex().items_center().rounded(8)
+        .border_1().border_color(this.query ? t.accent : t.border).cursor_text()
+        .child(Input.new(this.search).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
       .child(v_flex().id("mow-files").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
         .when(Boolean(empty), (el) => el.child(div().p(8).text_size(12).text_color(t.dim).child(empty)))
-        .when(this.files.length > LIMIT, (el) => el.child(div().p(8).text_size(11).text_color(t.dim)
-          .child(`Showing the first ${LIMIT} of ${this.files.length} files`))));
+        .when(matches.length > LIMIT, (el) => el.child(div().p(8).text_size(11).text_color(t.dim)
+          .child(`Showing the first ${LIMIT} of ${matches.length}: filter to find the rest`))));
   }
 }
