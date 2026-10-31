@@ -10,7 +10,7 @@ async function check(file) {
   // in a sentinel that comes off with exactly one newline.
   const r = await exec("sh", ["-c",
     'p=$(realpath -- "$1" && printf x) || exit 1; p=${p%x}; p=${p%?}; [ -f "$p" ] && printf %s "$p"',
-    "md-open-with", file]);
+    "md-browser", file]);
   if (r.code !== 0 || /[\0-\x1f\x7f]/.test(r.stdout) || !/\.(md|mdx|markdown)$/i.test(r.stdout))
     return { why: "Not a Markdown file" };
   return { path: r.stdout };
