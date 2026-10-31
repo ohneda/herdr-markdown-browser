@@ -50,8 +50,22 @@ function command(app, file) {
   }
 }
 
+// Only a Markdown file goes to an app: not a link named *.md to a program or an app bundle
+// (the default handler would run it), and nothing cmd would read as syntax.
+async function check(app, file) {
+  if (window().platform !== "windows") {
+    const r = await exec("sh", ["-c", 'p=$(realpath -- "$1") && [ -f "$p" ] && printf %s "$p"', "md-open-with", file]);
+    if (r.code !== 0 || !/\.(md|mdx|markdown)$/i.test(r.stdout)) return "Not a Markdown file";
+  } else if (app.argv && /\.(bat|cmd)$/i.test(app.argv[0]) && /[&|^%<>()!"]/.test(file)) {
+    return "A .bat or .cmd launcher can't take this file name safely";
+  }
+  return null;
+}
+
 // Resolves with null, or why it couldn't open.
 export async function openWith(app, file) {
+  const why = await check(app, file).catch((e) => String(e?.message ?? e));
+  if (why) return why;
   const [cmd, args] = command(app, file);
   try {
     const r = await exec(cmd, args);

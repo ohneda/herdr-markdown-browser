@@ -94,10 +94,12 @@ export default class MdOpenWith extends View {
     });
   }
 
+  // A popup closes only once the app is asked: closing it ends its tasks, and openWith checks
+  // the file before it starts the app.
   open(app, file = this.file) {
-    if (this.overlay) closeOverlay(this.overlay);
     openWith(app, file).then((why) => {
       if (why) notify({ title: `Can't open in ${app.label}`, body: why, level: "error" });
+      if (this.overlay) closeOverlay(this.overlay);
     });
   }
 

@@ -37,11 +37,13 @@ export async function markdownFiles(cwd, on) {
   } else {
     r = await exec("find", [cwd, "-mindepth", "1", "-maxdepth", "4",
       "-type", "d", "(", "-name", "node_modules", "-o", "-name", ".*", "-o", "-path", `${cwd}/Library`, ")", "-prune", "-o",
-      "-type", "f", "(", "-iname", "*.md", "-o", "-iname", "*.mdx", "-o", "-iname", "*.markdown", ")", "-print"], { on });
+      "-type", "f", "(", "-iname", "*.md", "-o", "-iname", "*.mdx", "-o", "-iname", "*.markdown", ")", "-print0"], { on });
   }
   // find exits 1 when some folders can't be read; what it found still counts.
   if (r.code !== 0 && !r.stdout) throw new Error(r.stderr.trim() || "Cannot list this folder");
-  const files = r.stdout.split(/\r?\n/).filter(Boolean).map((p) => p.slice(cwd.length).replace(/^[\\/]/, ""));
+  // NUL-separated from find (a name may hold a newline; Windows names can't).
+  const files = r.stdout.split(r.stdout.includes("\0") ? "\0" : /\r?\n/).filter((p) => p.startsWith(cwd) && /^[\\/]/.test(p.slice(cwd.length)) && MARKDOWN.test(p))
+    .map((p) => p.slice(cwd.length + 1));
   return { root: cwd, files: files.sort(byFolder) };
 }
 
