@@ -14,6 +14,8 @@ import { MARKDOWN, LIMIT, location, markdownFiles } from "./list.js";
 // ({ slot: { file, on } }; without one, its props' file).
 const SLOTS = "md-open-with.slots";
 const SHOW = "md-open-with.show";
+// The preview pane focused last: a click in the list shows its file there.
+const LAST = "md-open-with.last";
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
 
 function prose(text, file) {
@@ -53,8 +55,12 @@ export default class MdOpenWith extends View {
   }
 
   // A pane doesn't know its id; the list recorded it for this copy's slot.
+  paneId() {
+    return this.slot ? Object.entries(shared(SLOTS) ?? {}).find(([, slot]) => slot === this.slot)?.[0] ?? null : null;
+  }
+
   focused() {
-    const pane = Object.entries(shared(SLOTS) ?? {}).find(([, slot]) => slot === this.slot)?.[0];
+    const pane = this.paneId();
     return pane ? panes().find((p) => p.pane === pane)?.focused : panes().some((p) => p.mod === "md-open-with" && p.focused);
   }
 
@@ -103,15 +109,18 @@ export default class MdOpenWith extends View {
     });
   }
 
-  // One preview per tab. One opened from here has a slot: shared SHOW points it at the next
-  // file, in place. Others (opened from a shell) can't change: a new one opens beside it and
-  // takes its place. A closed pane's room goes to the pane before it, so the new one swaps to
-  // the left first; else each replacement halves it. run() doesn't wait, so each step waits to
-  // see the last one land. Resolves when done (a popup closes only then: closing it ends its
-  // tasks).
-  async preview(file, on, cx) {
+  // Shows the file in the tab's preview: the focused one, else the one focused last, else any;
+  // with `newPane`, or without one, in a new pane. One opened from here has a slot: shared SHOW
+  // points it at the next file, in place. Others (opened from a shell) can't change: a new one
+  // opens beside it and takes its place. A closed pane's room goes to the pane before it, so
+  // the new one swaps to the left first; else each replacement halves it. run() doesn't wait,
+  // so each step waits to see the last one land. Resolves when done (a popup closes only then:
+  // closing it ends its tasks).
+  async preview(file, on, cx, newPane = false) {
     const tab = focused()?.tab;
-    const old = panes().find((p) => p.tab === tab && p.mod === "md-open-with");
+    const previews = panes().filter((p) => p.tab === tab && p.mod === "md-open-with");
+    const old = newPane ? null
+      : previews.find((p) => p.focused) ?? previews.find((p) => p.pane === shared(LAST)) ?? previews[0];
     const slot = old && shared(SLOTS)?.[old.pane];
     if (slot) return setShared(SHOW, { ...(shared(SHOW) ?? {}), [slot]: { file, on } });
 
@@ -194,6 +203,8 @@ export default class MdOpenWith extends View {
     if (this.file) {
       const want = shown(this.slot);
       if (want && (want.file !== this.file || (want.on ?? null) !== this.on)) this.show(want, cx);
+      const pane = this.paneId();
+      if (pane && shared(LAST) !== pane && panes().find((p) => p.pane === pane)?.focused) setShared(LAST, pane);
       return this.pane();
     }
     const { cwd, on } = this.where();
@@ -211,9 +222,9 @@ export default class MdOpenWith extends View {
         .when(!enabled, (el) => el.text_color(t.dim))
         .child(label);
     return v_flex().w_full().p(4).gap(4).bg(t.popover).text_color(t.foreground).text_size(12.5)
-      .child(item("mow-preview", "Preview", true, (_e, cx) => {
+      .child(item("mow-preview", "Preview in new pane", true, (_e, cx) => {
         cx.spawn(async (cx) => {
-          await this.preview(this.file, this.on, cx);
+          await this.preview(this.file, this.on, cx, true);
           closeOverlay(this.overlay);
         });
       }))

@@ -7,8 +7,9 @@ default…) on macOS, Windows and Linux.
 - **Markdown panel**: the `.md` / `.mdx` / `.markdown` files around the focused pane: its git
   repo's (tracked and untracked, not ignored), else up to four levels of its folder (hidden
   folders, `node_modules` and a home's `Library` skipped). It follows the focused terminal
-  (focusing a preview keeps the list) and updates when a Markdown file is added or removed. Click a file to preview it: a tab
-  has one preview pane, and the next file replaces it. Right-click for *Preview* and
+  (focusing a preview keeps the list) and updates when a Markdown file is added or removed.
+  Click a file to show it in the tab's preview pane (the focused one, else the one focused
+  last; a new one if the tab has none). Right-click for *Preview in new pane* and
   *Open in &lt;app&gt;*.
 - **Preview pane**: renders the file, reloads when it changes, hides front matter. Its header
   has one button per configured app.
@@ -90,7 +91,7 @@ Herdr: to pick up a newer Files panel, clone it again and repeat step 2.
    ```js
    .when(!entry.dir && /\.(md|mdx|markdown)$/i.test(entry.name), el => el.on_mouse_down("right", (_e, cx) => {
      cx.stop_propagation();
-     // 12 + 32 per item: Preview, then one per app in config.json (here 2).
+     // 12 + 32 per item: Preview in new pane, then one per app in config.json (here 2).
      openOverlay({ mod: "md-open-with", kind: "popup", height: 12 + 32 * 3, props: { file: `${this.root}/${path}`, on: this.on } });
    }))
    ```
