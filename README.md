@@ -1,8 +1,7 @@
 # md-open-with
 
 A [Herdr](https://herdr.dev) mod: find the Markdown files you're working on, preview them in a
-pane, and open them in the app you choose (Marked 2, Typora, Obsidian, your system's
-default…) on macOS, Windows and Linux.
+pane, and open them in your system's default app for Markdown, on macOS, Windows and Linux.
 
 - **Markdown panel**: the `.md` / `.mdx` / `.markdown` files around the focused pane: its git
   repo's (tracked and untracked, not ignored), else up to four levels of its folder (hidden
@@ -10,13 +9,18 @@ default…) on macOS, Windows and Linux.
   (focusing a preview keeps the list) and updates when a Markdown file is added or removed.
   Click a file to show it in the tab's preview pane (the focused one, else the one focused
   last; a new one if the tab has none). Right-click for *Preview in new pane* and
-  *Open in &lt;app&gt;*.
+  *Open in Default app*.
 - **Preview pane**: renders the file, reloads when it changes, hides front matter. Its header
-  has one button per configured app.
-- **Key**: open the focused preview in the first configured app.
+  has a *Default app* button.
+- **Key**: open the focused preview in the default app.
+
+The default app is whatever the system opens `.md` files with: `open` on macOS,
+`rundll32 url.dll,FileProtocolHandler` on Windows, `xdg-open` on Linux. To use Marked, Typora
+or another app, make it the default for `.md` files in your system's settings. On macOS and
+Linux, only a regular Markdown file is handed over, not a `*.md` link to a program.
 
 Files on another machine can be listed and previewed (the list refreshes every 10 s), but not
-handed to an app: apps run on this computer.
+handed to the default app: it runs on this computer.
 
 ## Install
 
@@ -38,30 +42,6 @@ layout, clone it first: `herdr-app do layout.clone '{"name":"main","as":"my-main
 { "global": { "cmd-shift-m": "layout.toggle:markdown" } }
 ```
 
-## Choose the apps: `config.json`
-
-Copy `config.example.json` to `config.json` in the same folder and edit it. Each platform
-(`macos`, `windows`, `linux`) has a list; every entry becomes a button and a menu item.
-
-```json
-{
-  "macos":   [ { "label": "Marked 2", "app": "Marked 2" } ],
-  "windows": [ { "label": "Typora", "argv": ["C:\\Program Files\\Typora\\Typora.exe", "{file}"] } ],
-  "linux":   [ { "label": "Typora", "argv": ["typora", "{file}"] },
-               { "label": "Default app", "default": true } ]
-}
-```
-
-| Entry | Runs | Where |
-|---|---|---|
-| `"app": "Marked 2"` | `open -a "Marked 2" <file>` | macOS |
-| `"argv": ["typora", "{file}"]` | that program; `{file}` becomes the path (appended if absent) | all |
-| `"default": true` | `open` / `rundll32 url.dll,FileProtocolHandler` / `xdg-open` | all |
-
-Without `config.json`, or without a list for this platform, there is one entry: the system's
-default app. Saving `config.json` applies at once. A mistake in it shows a warning when a
-preview opens and falls back to the default app.
-
 ## Key
 
 In `~/.config/herdr-app/keys.json`:
@@ -70,7 +50,7 @@ In `~/.config/herdr-app/keys.json`:
 { "mod:md-open-with": { "cmd-shift-o": "md-open-with.open" } }
 ```
 
-With a preview pane focused, the key opens its file in the first app of `config.json`.
+With a preview pane focused, the key opens its file in the default app.
 
 ## Open a preview from a shell
 
@@ -91,8 +71,8 @@ Herdr: to pick up a newer Files panel, clone it again and repeat step 2.
    ```js
    .when(!entry.dir && /\.(md|mdx|markdown)$/i.test(entry.name), el => el.on_mouse_down("right", (_e, cx) => {
      cx.stop_propagation();
-     // 12 + 32 per item: Preview in new pane, then one per app in config.json (here 2).
-     openOverlay({ mod: "md-open-with", kind: "popup", height: 12 + 32 * 3, props: { file: `${this.root}/${path}`, on: this.on } });
+     // 12 + 32 per item: Preview in new pane, Open in Default app.
+     openOverlay({ mod: "md-open-with", kind: "popup", height: 12 + 32 * 2, props: { file: `${this.root}/${path}`, on: this.on } });
    }))
    ```
 

@@ -1,15 +1,14 @@
 // Markdown files, three ways, by props:
-// - { file, on }: the file rendered as a pane, reloaded when it changes, with buttons that hand
-//   it to the apps in config.json (on: the machine it lives on, null for this one).
+// - { file, on }: the file rendered as a pane, reloaded when it changes, with a button that
+//   hands it to the system's default app (on: the machine it lives on, null for this one).
 // - { file, on, overlay }: the file's right-click menu, as a popup.
 // - nothing: a panel listing the Markdown files around the focused pane (see list.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { props, readTextFile, watchFolder, theme, panes, focused, run, notify, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
-import { loadApps, openWith } from "./apps.js";
+import { openDefault } from "./open.js";
 import { MARKDOWN, LIMIT, location, markdownFiles } from "./list.js";
 
-// Front matter, and in MDX the top-level import/export lines: not prose.
 // Previews opened from the list: { pane id: slot }, and what each slot shows now
 // ({ slot: { file, on } }; without one, its props' file).
 const SLOTS = "md-open-with.slots";
@@ -18,6 +17,7 @@ const SHOW = "md-open-with.show";
 const LAST = "md-open-with.last";
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
 
+// Front matter, and in MDX the top-level import/export lines: not prose.
 function prose(text, file) {
   let s = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
   if (/\.mdx$/i.test(file)) s = s.replace(/^(import|export)\s.*$/gm, "");
@@ -30,13 +30,6 @@ export default class MdOpenWith extends View {
     this.file = file ?? null;
     this.on = on ?? null;
     this.overlay = overlay ?? null;
-    this.apps = [];
-    cx.spawn(async (cx) => {
-      const { apps, error } = await loadApps();
-      this.apps = apps;
-      if (error && this.file && !this.overlay) notify({ title: "md-open-with", body: error, level: "warning" });
-      cx.notify();
-    });
     if (this.overlay) return;
     if (!this.file) return this.initList(cx);
 
@@ -45,11 +38,11 @@ export default class MdOpenWith extends View {
     this.show(shown(this.slot) ?? { file: this.file, on: this.on }, cx);
     // watchFolder only sees this machine: another's, look again now and then.
     cx.timer.every(3000, (cx) => { if (this.on) this.load(cx); });
-    // "md-open-with.open" in keys.json: the first app. It reaches every shown copy; the focused one acts.
+    // "md-open-with.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
     cx.spawn(async () => {
       for (;;) {
         const c = await nextCommand();
-        if (c === "open" && !this.on && this.focused() && this.apps[0]) this.open(this.apps[0]);
+        if (c === "open" && !this.on && this.focused()) this.open();
       }
     });
   }
@@ -100,11 +93,11 @@ export default class MdOpenWith extends View {
     });
   }
 
-  // A popup closes only once the app is asked: closing it ends its tasks, and openWith checks
-  // the file before it starts the app.
-  open(app, file = this.file) {
-    openWith(app, file).then((why) => {
-      if (why) notify({ title: `Can't open in ${app.label}`, body: why, level: "error" });
+  // A popup closes only once the app is asked: closing it ends its tasks, and openDefault
+  // checks the file before it starts the app.
+  open() {
+    openDefault(this.file).then((why) => {
+      if (why) notify({ title: "Can't open in the default app", body: why, level: "error" });
       if (this.overlay) closeOverlay(this.overlay);
     });
   }
@@ -214,7 +207,7 @@ export default class MdOpenWith extends View {
 
   menu() {
     const t = theme();
-    // Apps only reach this machine's files.
+    // The default app only reaches this machine's files.
     const away = this.on ? " (other machine)" : "";
     const item = (id, label, enabled, action) =>
       div().id(id).h(28).px(10).flex().items_center().rounded(6).truncate()
@@ -228,8 +221,7 @@ export default class MdOpenWith extends View {
           closeOverlay(this.overlay);
         });
       }))
-      .children(this.apps.map((app, i) =>
-        item(`mow-app-${i}`, `Open in ${app.label}${away}`, !this.on, () => this.open(app))));
+      .child(item("mow-default", `Open in Default app${away}`, !this.on, () => this.open()));
   }
 
   pane() {
@@ -239,11 +231,11 @@ export default class MdOpenWith extends View {
       .child(h_flex().h(32).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().font_semibold().truncate().child(name))
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(this.on ? `${this.on}:${this.file}` : this.file))
-        .when(!this.on, (el) => el.children(this.apps.map((app, i) =>
-          div().id(`mow-open-${i}`).flex_none().px(8).py(2).rounded(5).text_color(t.muted).cursor_pointer()
+        .when(!this.on, (el) => el.child(
+          div().id("mow-open").flex_none().px(8).py(2).rounded(5).text_color(t.muted).cursor_pointer()
             .hover((s) => s.bg(t.hover).text_color(t.foreground))
-            .on_click(() => this.open(app))
-            .child(app.label)))))
+            .on_click(() => this.open())
+            .child("Default app"))))
       .child(this.error
         ? div().p(16).text_size(12.5).text_color(t.dim).child(this.error)
         : this.text === null
@@ -254,8 +246,8 @@ export default class MdOpenWith extends View {
 
   list() {
     const t = theme();
-    // The popup's height: 12 + 32 per item (Preview, then the apps).
-    const height = 12 + 32 * (1 + this.apps.length);
+    // The popup's height: 12 + 32 per item (Preview in new pane, Open in Default app).
+    const height = 12 + 32 * 2;
     const rows = this.files.slice(0, LIMIT).map((rel) => {
       const cut = Math.max(rel.lastIndexOf("/"), rel.lastIndexOf("\\"));
       const file = `${this.root}/${rel}`;
