@@ -51,22 +51,30 @@ function command(app, file) {
 }
 
 // Only a Markdown file goes to an app: not a link named *.md to a program or an app bundle
-// (the default handler would run it), and nothing cmd would read as syntax.
+// (the default handler would run it), and nothing cmd would read as syntax. Resolves with
+// { path } (what to open: the checked path itself) or { why }.
 async function check(app, file) {
   if (window().platform !== "windows") {
-    const r = await exec("sh", ["-c", 'p=$(realpath -- "$1") && [ -f "$p" ] && printf %s "$p"', "md-open-with", file]);
-    if (r.code !== 0 || !/\.(md|mdx|markdown)$/i.test(r.stdout)) return "Not a Markdown file";
-  } else if (app.argv && /\.(bat|cmd)$/i.test(app.argv[0]) && /[&|^%<>()!"]/.test(file)) {
-    return "A .bat or .cmd launcher can't take this file name safely";
+    // Every byte of the resolved path: $(...) drops trailing newlines, so realpath's line
+    // ends in a sentinel that comes off with exactly one newline.
+    const r = await exec("sh", ["-c",
+      'p=$(realpath -- "$1" && printf x) || exit 1; p=${p%x}; p=${p%?}; [ -f "$p" ] && printf %s "$p"',
+      "md-open-with", file]);
+    if (r.code !== 0 || /[\0-\x1f\x7f]/.test(r.stdout) || !/\.(md|mdx|markdown)$/i.test(r.stdout))
+      return { why: "Not a Markdown file" };
+    return { path: r.stdout };
   }
-  return null;
+  // A program named without .exe may be a .cmd or .bat (npm's shims are), which cmd parses.
+  if (app.argv && !/\.exe$/i.test(app.argv[0]) && /[&|^%<>()!"]/.test(file))
+    return { why: "Name the program's .exe in config.json to open a file named like this" };
+  return { path: file };
 }
 
 // Resolves with null, or why it couldn't open.
 export async function openWith(app, file) {
-  const why = await check(app, file).catch((e) => String(e?.message ?? e));
+  const { path, why } = await check(app, file).catch((e) => ({ why: String(e?.message ?? e) }));
   if (why) return why;
-  const [cmd, args] = command(app, file);
+  const [cmd, args] = command(app, path);
   try {
     const r = await exec(cmd, args);
     return r.code === 0 ? null : (r.stderr.trim() || `${cmd} exited with ${r.code}`);
