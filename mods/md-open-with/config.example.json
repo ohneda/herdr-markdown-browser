@@ -1,0 +1,14 @@
+{
+  "macos": [
+    { "label": "Marked 2", "app": "Marked 2" },
+    { "label": "Default app", "default": true }
+  ],
+  "windows": [
+    { "label": "Typora", "argv": ["C:\\Program Files\\Typora\\Typora.exe", "{file}"] },
+    { "label": "Default app", "default": true }
+  ],
+  "linux": [
+    { "label": "Typora", "argv": ["typora", "{file}"] },
+    { "label": "Default app", "default": true }
+  ]
+}

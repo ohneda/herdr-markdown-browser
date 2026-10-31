@@ -1,0 +1,5 @@
+# Written by Herdr on every start
+jsconfig.json
+*.d.ts
+.DS_Store
+mods/md-open-with/config.json
