@@ -1,5 +1,7 @@
 # markdown-browser
 
+![Markdown Browser](preview.png)
+
 A [Herdr](https://herdr.dev) mod: find the Markdown files you're working on, preview them in a
 pane, and open them in your system's default app for Markdown, on macOS, Windows and Linux.
 
@@ -120,3 +122,7 @@ Herdr: to pick up a newer Files panel, clone it again and repeat step 2.
 
 3. In your cloned layout, change `"mod": "files"` to `"mod": "my-files"`.
 4. `herdr-app check ~/.config/herdr-app/mods/my-files`
+
+## License
+
+MIT. See [LICENSE](LICENSE). [RECIPE.md](RECIPE.md) describes the mod for building it from scratch.
