@@ -4,7 +4,6 @@
 import { spaces, panes, focused, exec, window } from "herdr";
 
 export const MARKDOWN = /\.(md|mdx|markdown)$/i;
-export const LIMIT = 2000;
 
 // A PowerShell single-quoted string: -Command reads what follows the script as more script,
 // so a path goes in as a literal, as in the Files panel. PowerShell also ends a literal at the

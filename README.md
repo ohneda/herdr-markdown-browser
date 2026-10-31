@@ -3,40 +3,64 @@
 A [Herdr](https://herdr.dev) mod: find the Markdown files you're working on, preview them in a
 pane, and open them in your system's default app for Markdown, on macOS, Windows and Linux.
 
-- **Markdown panel**: the `.md` / `.mdx` / `.markdown` files around the focused pane: its git
-  repo's (tracked and untracked, not ignored), else up to four levels of its folder (hidden
+- **Markdown panel**: the `.md` / `.mdx` / `.markdown` files around the focused terminal: its
+  git repo's (tracked and untracked, not ignored), else up to four levels of its folder (hidden
   folders, `node_modules` and a home's `Library` skipped). It follows the focused terminal
-  (focusing a preview keeps the list) and updates when a Markdown file is added or removed.
-  Click a file to show it in the tab's preview pane (the focused one, else the one focused
-  last; a new one if the tab has none). Right-click for *Preview in new pane* and
+  (focusing a preview keeps the list while you stay in that tab) and updates when a Markdown
+  file or a `.gitignore` changes; ↻ rereads it. Type in *Filter* to narrow it: every word must
+  appear somewhere in the path. In the filter, ↑ / ↓ move through the matches, Enter previews
+  the chosen one, and Esc clears it. The file the tab's preview shows is highlighted.
+- **Click** a file to show it in the tab's preview pane (the focused one, else the one focused
+  last; a new one if the tab has none). **Right-click** for *Preview in new pane* and
   *Open in Default app*.
-- **Preview pane**: renders the file, reloads when it changes, hides front matter. Its header
-  has a *Default app* button.
-- **Key**: open the focused preview in the default app.
+- **Preview pane**: renders the file and reloads it when it changes. Front matter is hidden,
+  and in `.mdx` files so are top-level `import` / `export` lines (not those in code blocks).
+  Its header has a *Default app* button.
 
 The default app is whatever the system opens `.md` files with: `open` on macOS,
 `rundll32 url.dll,FileProtocolHandler` on Windows, `xdg-open` on Linux. To use Marked, Typora
-or another app, make it the default for `.md` files in your system's settings. On macOS and
-Linux, only a regular Markdown file is handed over, not a `*.md` link to a program.
+or another app, make it the default for `.md` files in your system's settings. Only a regular
+Markdown file is handed over, not a `*.md` link to a program or a folder.
 
-Files on another machine can be listed and previewed (the list refreshes every 10 s), but not
-handed to the default app: it runs on this computer.
+## What it runs and reads
+
+It reads only the Markdown files it lists and previews, and never uses the network. To list
+and open them it runs:
+
+| When | Program |
+|---|---|
+| Listing a git repo | `git rev-parse`, `git ls-files` |
+| Listing a folder outside git | `find` (macOS, Linux, other machines), PowerShell `Get-ChildItem` (Windows) |
+| Before opening in the default app | `sh` with `realpath` (macOS, Linux), PowerShell `Get-Item` (Windows) |
+| Opening in the default app | `open`, `xdg-open` or `rundll32 url.dll,FileProtocolHandler` |
+
+On another machine (a space from `hc machine ls`), listing runs there; opening in the default
+app is off, since the app would run on this computer.
 
 ## Install
 
-Copy `mods/markdown-browser/` to `~/.config/herdr-app/mods/`, then:
+Copy `mods/markdown-browser/` to `~/.config/herdr-app/mods/`, unless a folder of that name is
+already there (don't overwrite it):
 
 ```sh
+test -e ~/.config/herdr-app/mods/markdown-browser && echo "markdown-browser already exists" \
+  || cp -R mods/markdown-browser ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/markdown-browser
 ```
 
 The first time Herdr sees the folder, it docks the Markdown panel at the right edge of the
-shown layout, 300 px wide. After that your layout decides: drag its edge to resize it, or move
-the block in `layouts/<name>.json` (it's the block with `"content": { "mod": "markdown-browser" }`).
+shown layout, 300 px wide. Drag its edge to resize it.
 
-To show and hide it with a key, give that block an `"id"` (say `"markdown"`; on a shipped
-layout, clone it first: `herdr-app do layout.clone '{"name":"main","as":"my-main"}'`) and bind
-`layout.toggle` in `~/.config/herdr-app/keys.json`:
+To move it or show and hide it with a key, edit your layout. Herdr's own layouts are read-only
+(an edit is moved aside on the next start), so clone yours first:
+
+```sh
+herdr-app do layout.clone '{"name":"main","as":"my-main"}'
+```
+
+In `layouts/my-main.json`, the panel is the block with `"content": { "mod": "markdown-browser" }`.
+Move it, or give it an `"id"` (say `"markdown"`) and bind `layout.toggle` in
+`~/.config/herdr-app/keys.json`:
 
 ```json
 { "global": { "cmd-shift-m": "layout.toggle:markdown" } }
@@ -50,13 +74,26 @@ In `~/.config/herdr-app/keys.json`:
 { "mod:markdown-browser": { "cmd-shift-o": "markdown-browser.open" } }
 ```
 
-With a preview pane focused, the key opens its file in the default app.
+With a preview pane focused, the key opens its file in the default app. It works in previews
+opened from the panel, not in one opened from a shell (below): a mod pane isn't told its own
+pane id, so only previews the panel opened (and recorded) can tell they're focused.
 
 ## Open a preview from a shell
 
 ```sh
 herdr-app do pane.split '{"direction":"right","mod":"markdown-browser","props":{"file":"/path/to/README.md"}}'
 ```
+
+The panel can't switch such a preview to another file in place: the first click replaces it
+with one of its own.
+
+## How often it looks
+
+- A local repo or folder is watched: the list and previews update when files change.
+- Your home folder, or a folder above it, isn't watched (that would be every file you have):
+  the list is reread every 10 s.
+- On another machine, the list is reread every 10 s, and a preview every 3 s while its tab is
+  the shown one.
 
 ## Optional: right-click in the Files panel
 
@@ -76,5 +113,5 @@ Herdr: to pick up a newer Files panel, clone it again and repeat step 2.
    }))
    ```
 
-3. In your (cloned) layout, change `"mod": "files"` to `"mod": "my-files"`.
+3. In your cloned layout, change `"mod": "files"` to `"mod": "my-files"`.
 4. `herdr-app check ~/.config/herdr-app/mods/my-files`

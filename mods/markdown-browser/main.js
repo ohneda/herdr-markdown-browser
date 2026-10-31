@@ -4,10 +4,10 @@
 // - { file, on, overlay }: the file's right-click menu, as a popup.
 // - nothing: a panel listing the Markdown files around the focused pane (see list.js).
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
-import { props, readTextFile, watchFolder, theme, panes, focused, run, notify, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
+import { v_flex, h_flex, TextView, InputState, Input, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
+import { props, readTextFile, watchFolder, theme, panes, focused, run, notify, openOverlay, closeOverlay, nextCommand, shared, setShared, home } from "herdr";
 import { openDefault } from "./open.js";
-import { MARKDOWN, LIMIT, location, markdownFiles, join } from "./list.js";
+import { MARKDOWN, location, markdownFiles, join } from "./list.js";
 
 // Previews opened from the list: { pane id: slot }, and what each slot shows now
 // ({ slot: { file, on } }; without one, its props' file).
@@ -25,6 +25,14 @@ function tabPreview(tab) {
 }
 // What decides the list besides Markdown files themselves.
 const IGNORES = /(^|[\\/])\.gitignore$/;
+// A list row, and the right-click menu: 12 + 32 per item (Preview in new pane, Open in Default app).
+const ROW = 28;
+const MENU = 12 + 32 * 2;
+// The home folder, or one that holds it ("/", "/Users", "C:\").
+function aboveHome(root) {
+  const h = home().replace(/[\\/]+$/, ""), r = root.replace(/[\\/]+$/, "");
+  return r === "" || h === r || h.startsWith(`${r}/`) || h.startsWith(`${r}\\`);
+}
 
 // Front matter, and in MDX the top-level import/export lines (not inside a code fence): not prose.
 function prose(text, file) {
@@ -52,14 +60,20 @@ export default class MarkdownBrowser extends View {
     // Opened from the list: its slot, which shared SHOW can point at another file.
     this.slot = props().slot ?? null;
     this.request = 0;
+    this.text = null;
     this.show(shown(this.slot) ?? { file: this.file, on: this.on }, cx);
-    // watchFolder only sees this machine: another's, look again now and then (one read at a time).
-    cx.timer.every(3000, (cx) => { if (this.on && !this.reading) this.load(cx); });
+    // watchFolder only sees this machine: another's, look again every 3 s (one read at a time),
+    // and not while its tab is in the background.
+    cx.timer.every(3000, (cx) => {
+      if (!this.on || this.reading) return;
+      const me = panes().find((p) => p.pane === this.paneId());
+      if (!me || me.tab === focused()?.tab) this.load(cx);
+    });
     // "markdown-browser.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
     cx.spawn(async () => {
       for (;;) {
         const c = await nextCommand();
-        if (c === "open" && !this.on && this.focused()) this.open();
+        if (c === "open" && !this.on && this.isFocused()) this.open();
       }
     });
   }
@@ -70,16 +84,16 @@ export default class MarkdownBrowser extends View {
   }
 
   // Only a copy that knows its pane can tell it's the focused one.
-  focused() {
+  isFocused() {
     const pane = this.paneId();
     return Boolean(pane && panes().find((p) => p.pane === pane)?.focused);
   }
 
-  // Show this file from now on, and watch it.
+  // Show this file from now on, and watch it. The text shown before stays until the new one
+  // is read, rather than a "Loading…" flash.
   show({ file, on }, cx) {
     this.file = file;
     this.on = on ?? null;
-    this.text = null;
     this.error = null;
     this.load(cx);
     const watching = (this.watching = { file });
@@ -111,8 +125,9 @@ export default class MarkdownBrowser extends View {
         if (error === this.error) return;
         this.error = error;
       } else {
-        if (text === this.text && !this.error) return;
+        if (text === this.text && file === this.textFile && !this.error) return;
         this.text = text;
+        this.textFile = file;
         this.error = null;
       }
       cx.notify();
@@ -161,7 +176,8 @@ export default class MarkdownBrowser extends View {
       for (let i = 0; i < 40; i++) { if (test()) return true; await cx.sleep(25); }
       return false;
     };
-    if (!await until(() => (fresh.pane = panes().find((p) => !before.has(p.pane) && p.tab === tab && p.mod === "markdown-browser")?.pane))) return;
+    if (!await until(() => (fresh.pane = panes().find((p) => !before.has(p.pane) && p.tab === tab && p.mod === "markdown-browser")?.pane)))
+      return notify({ title: "Can't open a preview", body: "The new pane didn't appear.", level: "error" });
     // Record the new pane's slot, forgetting closed panes'.
     const alive = new Set(panes().map((p) => p.pane));
     const slots = Object.fromEntries(Object.entries(shared(SLOTS) ?? {}).filter(([pane]) => alive.has(pane)));
@@ -173,20 +189,31 @@ export default class MarkdownBrowser extends View {
     setShared(LAST, Object.fromEntries(Object.entries(lastByTab()).filter(([, pane]) => alive.has(pane))));
     if (!old) return;
     run("pane.focus", { pane: fresh.pane });
-    if (!await until(() => focused()?.pane === fresh.pane)) return;
+    if (!await until(() => focused()?.pane === fresh.pane))
+      return notify({ title: "Couldn't replace the preview", body: "The old one is still open beside it.", level: "warning" });
     run("pane.swap", { direction: "left" });
     run("pane.close", { pane: old.pane });
   }
 
   // The list follows the focused pane; it rereads when a Markdown file or a .gitignore under it
-  // changes (another machine's: every 10 s).
+  // changes (another machine's, or a home's: every 10 s).
   initList(cx) {
     this.context = undefined;
     this.query = "";
     this.search = InputState.new({ placeholder: "Filter" });
-    this.search.on("change", (_e, cx) => { this.query = this.search.value(); cx.notify(); });
+    this.at = 0;
+    this.typing = false;
+    this.matches = [];
+    this.scroll = VirtualListScrollHandle.new();
+    this.search.on("change", (_e, cx) => { this.query = this.search.value(); this.at = 0; this.scroll.scroll_to_item(0); cx.notify(); });
+    this.search.on("submit", (_e, cx) => {
+      const rel = this.matches[this.at];
+      if (rel) cx.spawn((cx) => this.queuePreview(join(this.root, rel), this.on, cx));
+    });
+    this.search.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
+    this.search.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.refreshList(cx);
-    cx.timer.every(10000, (cx) => { if (this.on) this.refreshList(cx); });
+    cx.timer.every(10000, (cx) => { if (this.on || this.watching?.polled) this.refreshList(cx); });
   }
 
   // Focusing a preview keeps the list while the tab stays; a first look, or another tab,
@@ -227,8 +254,10 @@ export default class MarkdownBrowser extends View {
   }
 
   // A watch that fails (the folder went away, too many watchers) is retried a while later.
+  // A home, or a folder above it, is polled instead: watching it is every file the person has.
   watch(root, cx) {
     if (this.watching?.root === root) return;
+    if (aboveHome(root)) return void (this.watching = { root, polled: true });
     const watching = (this.watching = { root });
     cx.spawn(async (cx) => {
       try {
@@ -269,13 +298,13 @@ export default class MarkdownBrowser extends View {
         .when(!enabled, (el) => el.text_color(t.dim))
         .child(label);
     return v_flex().w_full().p(4).gap(4).bg(t.popover).text_color(t.foreground).text_size(12.5)
-      .child(item("mow-preview", "Preview in new pane", true, (_e, cx) => {
+      .child(item("mb-preview", "Preview in new pane", true, (_e, cx) => {
         cx.spawn(async (cx) => {
           await this.queuePreview(this.file, this.on, cx, true);
           closeOverlay(this.overlay);
         });
       }))
-      .child(item("mow-default", `Open in Default app${away}`, !this.on, () => this.open()));
+      .child(item("mb-default", `Open in Default app${away}`, !this.on, () => this.open()));
   }
 
   pane() {
@@ -286,7 +315,7 @@ export default class MarkdownBrowser extends View {
         .child(div().font_semibold().truncate().child(name))
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(this.on ? `${this.on}:${this.file}` : this.file))
         .when(!this.on, (el) => el.child(
-          div().id("mow-open").flex_none().px(8).py(2).rounded(5).text_color(t.muted).cursor_pointer()
+          div().id("mb-open").flex_none().px(8).py(2).rounded(5).text_color(t.muted).cursor_pointer()
             .hover((s) => s.bg(t.hover).text_color(t.foreground))
             .on_click(() => this.open())
             .child("Default app"))))
@@ -295,33 +324,27 @@ export default class MarkdownBrowser extends View {
         : this.text === null
           ? div().p(16).text_size(12.5).text_color(t.dim).child("Loading…")
           : div().flex_1().min_h(0).px(20).py(14).text_size(14)
-            .child(TextView.markdown(`md-body-${this.file}`, prose(this.text, this.file)).scrollable(true).selectable(true).size_full()));
+            .child(TextView.markdown(`md-body-${this.textFile}`, prose(this.text, this.textFile)).scrollable(true).selectable(true).size_full()));
   }
 
   list() {
     const t = theme();
-    // The popup's height: 12 + 32 per item (Preview in new pane, Open in Default app).
-    const height = 12 + 32 * 2;
     // Every word of the filter, anywhere in the path.
     const words = this.query.toLowerCase().split(/\s+/).filter(Boolean);
-    const matches = words.length ? this.files.filter((rel) => words.every((w) => rel.toLowerCase().includes(w))) : this.files;
-    // The file a click would replace, marked.
+    const matches = (this.matches = words.length ? this.files.filter((rel) => words.every((w) => rel.toLowerCase().includes(w))) : this.files);
+    if (this.at >= matches.length) this.at = Math.max(0, matches.length - 1);
+    // The file a click would replace, marked; the keyboard's row, while the filter has the keyboard.
     const target = tabPreview(focused()?.tab), current = target && shown(shared(SLOTS)?.[target.pane]);
-    const rows = matches.slice(0, LIMIT).map((rel) => {
+    const row = (rel, i) => {
       const cut = Math.max(rel.lastIndexOf("/"), rel.lastIndexOf("\\"));
-      const file = join(this.root, rel);
-      const on = current?.file === file && (current.on ?? null) === this.on;
-      return h_flex().id(`mow-file-${rel}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
-        .when(on, (el) => el.bg(t.selected))
+      const on = current?.file === join(this.root, rel) && (current.on ?? null) === this.on;
+      const at = this.typing && i === this.at;
+      return h_flex().h(ROW).px(8).gap(8).items_center().rounded(7).cursor_pointer()
+        .when(on || at, (el) => el.bg(on ? t.selected : t.hover))
         .hover((s) => s.bg(on ? t.selected : t.hover))
-        .on_click((_e, cx) => cx.spawn((cx) => this.queuePreview(file, this.on, cx)))
-        .on_mouse_down("right", (_e, cx) => {
-          cx.stop_propagation();
-          openOverlay({ mod: "markdown-browser", kind: "popup", height, props: { file, on: this.on } });
-        })
         .child(div().min_w(0).truncate().when(on, (el) => el.font_semibold()).child(rel.slice(cut + 1)))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(cut < 0 ? "" : rel.slice(0, cut)));
-    });
+    };
     const empty = this.listError || (this.loading && !this.files.length ? "Loading…"
       : !this.cwd ? "No folder" : !this.files.length ? "No Markdown files" : !matches.length ? "No matches" : null);
     const folder = this.root?.split(/[\\/]/).filter(Boolean).pop() ?? (this.root ? "/" : "");
@@ -331,16 +354,36 @@ export default class MarkdownBrowser extends View {
         .child(div().font_semibold().child("Markdown"))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim)
           .child(this.on && folder ? `${this.on}: ${folder}` : folder))
-        .child(div().id("mow-refresh").flex_none().px(4).rounded(5).text_color(t.dim).cursor_pointer()
+        .child(div().id("mb-refresh").flex_none().px(4).rounded(5).text_color(t.dim).cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => this.refreshList(cx))
           .child("↻")))
-      .child(div().id("mow-filter").flex_none().mx(6).mt(6).h(30).px(10).flex().items_center().rounded(8)
-        .border_1().border_color(this.query ? t.accent : t.border).cursor_text()
+      // Up and down move through the matches, Enter previews one, Escape clears the filter.
+      .child(div().id("mb-filter").flex_none().mx(6).mt(6).h(30).px(10).flex().items_center().rounded(8)
+        .border_1().border_color(this.typing || this.query ? t.accent : t.border).cursor_text()
+        .on_key_down((e, cx) => {
+          const n = this.matches.length;
+          if (e.key === "down" && n) this.at = (this.at + 1) % n;
+          else if (e.key === "up" && n) this.at = (this.at + n - 1) % n;
+          else if (e.key === "escape" && this.query) { this.search.set_value(""); this.query = ""; this.at = 0; }
+          else return;
+          cx.stop_propagation();
+          this.scroll.scroll_to_item(this.at);
+          cx.notify();
+        })
         .child(Input.new(this.search).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
-      .child(v_flex().id("mow-files").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
-        .when(Boolean(empty), (el) => el.child(div().p(8).text_size(12).text_color(t.dim).child(empty)))
-        .when(matches.length > LIMIT, (el) => el.child(div().p(8).text_size(11).text_color(t.dim)
-          .child(`Showing the first ${LIMIT} of ${matches.length}: filter to find the rest`))));
+      .child(empty
+        ? div().p(14).text_size(12).text_color(t.dim).child(empty)
+        // Rows are rebuilt as the list scrolls, so clicks are the list's, by key (the path).
+        : div().flex_1().min_h(0).relative().p(6)
+          .child(v_virtual_list("mb-files", matches.length, ROW, (i) => matches[i],
+            (range) => matches.slice(range.start, range.end).map((rel, k) => row(rel, range.start + k)))
+            .track_scroll(this.scroll).size_full()
+            .on_item_click((rel, cx) => cx.spawn((cx) => this.queuePreview(join(this.root, rel), this.on, cx)))
+            .on_item_secondary_click((rel, _e, cx) => {
+              cx.stop_propagation();
+              openOverlay({ mod: "markdown-browser", kind: "popup", height: MENU, props: { file: join(this.root, rel), on: this.on } });
+            }))
+          .child(Scrollbar.vertical("mb-files").absolute().inset_0()));
   }
 }
