@@ -6,17 +6,27 @@ import { spaces, panes, focused, exec, window } from "herdr";
 export const MARKDOWN = /\.(md|mdx|markdown)$/i;
 export const LIMIT = 2000;
 
-// Where the Files panel looks: the focused pane's folder, on its machine. A mod pane (a preview)
-// has none: then its tab's first terminal, `weak` (the list keeps what it shows).
+// A PowerShell single-quoted string: -Command reads what follows the script as more script,
+// so a path goes in as a literal, as in the Files panel. PowerShell also ends a literal at the
+// typographic single quotes (‘ ’ ‚ ‛); each is doubled like ' (exec takes no env to pass it by).
+export const psLiteral = (s) => `'${s.replace(/['‘’‚‛]/g, (c) => c + c)}'`;
+
+// A file under a root, which may be "/" or end in a separator.
+export const join = (root, rel) => `${root.replace(/[\\/]+$/, "")}/${rel}`;
+
+// Where the Files panel looks: the focused pane's folder, on its machine, in its tab. A mod
+// pane (a preview) has none: then its tab's first terminal, `weak` (the list keeps what it
+// shows while the tab stays the same).
 export function location() {
   const space = spaces().find((s) => s.active), f = focused();
   const pane = f?.pane ? panes().find((p) => p.pane === f.pane) : null;
   const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
+  const tab = f?.tab ?? null;
   if (pane && !pane.terminal) {
     const shell = panes().find((p) => p.tab === pane.tab && p.terminal && p.cwd);
-    return { cwd: shell?.cwd || space?.folder || null, on, weak: true };
+    return { cwd: shell?.cwd || space?.folder || null, on, tab, weak: true };
   }
-  return { cwd: pane?.cwd || f?.cwd || space?.folder || null, on, weak: false };
+  return { cwd: pane?.cwd || f?.cwd || space?.folder || null, on, tab, weak: false };
 }
 
 // Resolves with { root, files: [paths relative to root, sorted] }.
@@ -29,21 +39,29 @@ export async function markdownFiles(cwd, on) {
     if (r.code !== 0) throw new Error(r.stderr.trim() || "git ls-files failed");
     return { root, files: [...new Set(r.stdout.split("\0").filter(Boolean))].sort(byFolder) };
   }
-  let r;
+  let files;
   if (!on && window().platform === "windows") {
-    r = await exec("powershell", ["-NoProfile", "-Command",
-      "& { param($p) Get-ChildItem -LiteralPath $p -Recurse -Depth 3 -File -Include *.md,*.mdx,*.markdown -ErrorAction SilentlyContinue | Where-Object { $_.FullName.Substring($p.Length) -notmatch '[\\\\/](node_modules|\\.[^\\\\/]+)[\\\\/]' } | ForEach-Object { $_.FullName } }",
-      cwd]);
+    // Relative paths from PowerShell itself: its FullName may differ from cwd in case.
+    const r = await exec("powershell", ["-NoProfile", "-Command",
+      "& { param($p) $r = (Get-Item -LiteralPath $p -ErrorAction Stop).FullName.TrimEnd('\\', '/'); " +
+      "Get-ChildItem -LiteralPath $r -Recurse -Depth 3 -File -Include *.md,*.mdx,*.markdown -ErrorAction SilentlyContinue | " +
+      "ForEach-Object { $_.FullName.Substring($r.Length).TrimStart('\\', '/') } | " +
+      "Where-Object { $_ -notmatch '(^|[\\\\/])(node_modules|\\.[^\\\\/]+)[\\\\/]' } } " + psLiteral(cwd)]);
+    if (r.code !== 0) throw new Error(r.stderr.trim() || "Cannot list this folder");
+    files = r.stdout.split(/\r?\n/).filter((p) => p && MARKDOWN.test(p));
   } else {
-    r = await exec("find", [cwd, "-mindepth", "1", "-maxdepth", "4",
-      "-type", "d", "(", "-name", "node_modules", "-o", "-name", ".*", "-o", "-path", `${cwd}/Library`, ")", "-prune", "-o",
+    // "/" and a trailing separator: find starts from the bare folder, and paths are cut after it.
+    const base = cwd.replace(/[\\/]+$/, "");
+    const r = await exec("find", [base || "/", "-mindepth", "1", "-maxdepth", "4",
+      "-type", "d", "(", "-name", "node_modules", "-o", "-name", ".*", "-o", "-path", `${base}/Library`, ")", "-prune", "-o",
       "-type", "f", "(", "-iname", "*.md", "-o", "-iname", "*.mdx", "-o", "-iname", "*.markdown", ")", "-print0"], { on });
+    // find exits 1 when some folders can't be read; what it found still counts.
+    if (r.code !== 0 && !r.stdout) throw new Error(r.stderr.trim() || "Cannot list this folder");
+    // NUL-separated: a name may hold a newline.
+    files = r.stdout.split("\0")
+      .filter((p) => p.startsWith(`${base}/`) && MARKDOWN.test(p))
+      .map((p) => p.slice(base.length + 1));
   }
-  // find exits 1 when some folders can't be read; what it found still counts.
-  if (r.code !== 0 && !r.stdout) throw new Error(r.stderr.trim() || "Cannot list this folder");
-  // NUL-separated from find (a name may hold a newline; Windows names can't).
-  const files = r.stdout.split(r.stdout.includes("\0") ? "\0" : /\r?\n/).filter((p) => p.startsWith(cwd) && /^[\\/]/.test(p.slice(cwd.length)) && MARKDOWN.test(p))
-    .map((p) => p.slice(cwd.length + 1));
   return { root: cwd, files: files.sort(byFolder) };
 }
 

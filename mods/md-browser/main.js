@@ -7,21 +7,32 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { props, readTextFile, watchFolder, theme, panes, focused, run, notify, openOverlay, closeOverlay, nextCommand, shared, setShared } from "herdr";
 import { openDefault } from "./open.js";
-import { MARKDOWN, LIMIT, location, markdownFiles } from "./list.js";
+import { MARKDOWN, LIMIT, location, markdownFiles, join } from "./list.js";
 
 // Previews opened from the list: { pane id: slot }, and what each slot shows now
 // ({ slot: { file, on } }; without one, its props' file).
 const SLOTS = "md-browser.slots";
 const SHOW = "md-browser.show";
-// The preview pane focused last: a click in the list shows its file there.
+// The preview pane focused last in each tab ({ tab: pane id }): a click in the list shows its
+// file there.
 const LAST = "md-browser.last";
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
+const lastByTab = () => { const v = shared(LAST); return v && typeof v === "object" ? v : {}; };
+// What decides the list besides Markdown files themselves.
+const IGNORES = /(^|[\\/])\.gitignore$/;
 
-// Front matter, and in MDX the top-level import/export lines: not prose.
+// Front matter, and in MDX the top-level import/export lines (not inside a code fence): not prose.
 function prose(text, file) {
-  let s = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
-  if (/\.mdx$/i.test(file)) s = s.replace(/^(import|export)\s.*$/gm, "");
-  return s;
+  const s = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
+  if (!/\.mdx$/i.test(file)) return s;
+  let fence = null;
+  return s.split("\n").filter((line) => {
+    const m = line.match(/^\s*(`{3,}|~{3,})/);
+    if (m && !fence) fence = m[1];
+    else if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+    else if (!fence && /^(import|export)\s/.test(line)) return false;
+    return true;
+  }).join("\n");
 }
 
 export default class MdBrowser extends View {
@@ -35,9 +46,10 @@ export default class MdBrowser extends View {
 
     // Opened from the list: its slot, which shared SHOW can point at another file.
     this.slot = props().slot ?? null;
+    this.request = 0;
     this.show(shown(this.slot) ?? { file: this.file, on: this.on }, cx);
-    // watchFolder only sees this machine: another's, look again now and then.
-    cx.timer.every(3000, (cx) => { if (this.on) this.load(cx); });
+    // watchFolder only sees this machine: another's, look again now and then (one read at a time).
+    cx.timer.every(3000, (cx) => { if (this.on && !this.reading) this.load(cx); });
     // "md-browser.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
     cx.spawn(async () => {
       for (;;) {
@@ -52,9 +64,10 @@ export default class MdBrowser extends View {
     return this.slot ? Object.entries(shared(SLOTS) ?? {}).find(([, slot]) => slot === this.slot)?.[0] ?? null : null;
   }
 
+  // Only a copy that knows its pane can tell it's the focused one.
   focused() {
     const pane = this.paneId();
-    return pane ? panes().find((p) => p.pane === pane)?.focused : panes().some((p) => p.mod === "md-browser" && p.focused);
+    return Boolean(pane && panes().find((p) => p.pane === pane)?.focused);
   }
 
   // Show this file from now on, and watch it.
@@ -75,21 +88,29 @@ export default class MdBrowser extends View {
     });
   }
 
+  // The newest read wins: a slower, older one (or one for the file shown before) is dropped.
   load(cx) {
-    const file = this.file;
+    const request = ++this.request, file = this.file, on = this.on;
+    this.reading = true;
     cx.spawn(async (cx) => {
+      let text = null, error = null;
       try {
-        const text = await readTextFile(file, { on: this.on });
-        if (this.file !== file) return;
-        if (text === null) { this.error = "File not found"; return; }
-        if (text === this.text) return;
+        text = await readTextFile(file, { on });
+        if (text === null) error = "File not found";
+      } catch (e) {
+        error = String(e?.message ?? e);
+      }
+      if (request !== this.request || file !== this.file || on !== this.on) return;
+      this.reading = false;
+      if (error) {
+        if (error === this.error) return;
+        this.error = error;
+      } else {
+        if (text === this.text && !this.error) return;
         this.text = text;
         this.error = null;
-      } catch (e) {
-        this.error = String(e?.message ?? e);
-      } finally {
-        cx.notify();
       }
+      cx.notify();
     });
   }
 
@@ -100,6 +121,19 @@ export default class MdBrowser extends View {
       if (why) notify({ title: "Can't open in the default app", body: why, level: "error" });
       if (this.overlay) closeOverlay(this.overlay);
     });
+  }
+
+  // One preview at a time: two splits at once could each take the other's new pane.
+  async queuePreview(file, on, cx, newPane = false) {
+    const before = this.queue ?? Promise.resolve();
+    let done;
+    this.queue = new Promise((resolve) => (done = resolve));
+    try {
+      await before;
+      await this.preview(file, on, cx, newPane);
+    } finally {
+      done();
+    }
   }
 
   // Shows the file in the tab's preview: the focused one, else the one focused last, else any;
@@ -113,7 +147,7 @@ export default class MdBrowser extends View {
     const tab = focused()?.tab;
     const previews = panes().filter((p) => p.tab === tab && p.mod === "md-browser");
     const old = newPane ? null
-      : previews.find((p) => p.focused) ?? previews.find((p) => p.pane === shared(LAST)) ?? previews[0];
+      : previews.find((p) => p.focused) ?? previews.find((p) => p.pane === lastByTab()[tab]) ?? previews[0];
     const slot = old && shared(SLOTS)?.[old.pane];
     if (slot) return setShared(SHOW, { ...(shared(SHOW) ?? {}), [slot]: { file, on } });
 
@@ -132,6 +166,7 @@ export default class MdBrowser extends View {
     const kept = new Set(Object.values(slots));
     setShared(SLOTS, slots);
     setShared(SHOW, Object.fromEntries(Object.entries(shared(SHOW) ?? {}).filter(([s]) => kept.has(s))));
+    setShared(LAST, Object.fromEntries(Object.entries(lastByTab()).filter(([, pane]) => alive.has(pane))));
     if (!old) return;
     run("pane.focus", { pane: fresh.pane });
     if (!await until(() => focused()?.pane === fresh.pane)) return;
@@ -139,28 +174,33 @@ export default class MdBrowser extends View {
     run("pane.close", { pane: old.pane });
   }
 
-  // The list follows the focused pane; it rereads when a Markdown file under it changes
-  // (another machine's: every 10 s).
+  // The list follows the focused pane; it rereads when a Markdown file or a .gitignore under it
+  // changes (another machine's: every 10 s).
   initList(cx) {
     this.context = undefined;
     this.refreshList(cx);
     cx.timer.every(10000, (cx) => { if (this.on) this.refreshList(cx); });
   }
 
-  // Focusing a preview keeps the list; only a first look takes the preview's tab's folder.
+  // Focusing a preview keeps the list while the tab stays; a first look, or another tab,
+  // takes the preview's tab's folder.
   where() {
     const here = location();
-    return here.weak && this.cwd ? { cwd: this.cwd, on: this.on } : here;
+    return here.weak && this.cwd && here.tab === this.tab ? { cwd: this.cwd, on: this.on, tab: this.tab } : here;
   }
 
+  // A request while a read runs isn't lost: the read runs again after it.
   refreshList(cx) {
-    const { cwd, on } = this.where(), context = JSON.stringify([cwd, on]);
+    const { cwd, on, tab } = this.where(), context = JSON.stringify([cwd, on]);
+    this.tab = tab;
     if (context !== this.context) {
       this.context = context; this.cwd = cwd; this.on = on;
-      this.root = null; this.files = []; this.listError = null; this.loading = false; this.watching = null;
+      this.root = null; this.files = []; this.listError = null; this.loading = false; this.again = false; this.watching = null;
     }
-    if (!cwd || this.loading) return;
+    if (!cwd) return;
+    if (this.loading) { this.again = true; return; }
     this.loading = true;
+    this.again = false;
     cx.spawn(async (cx) => {
       try {
         const { root, files } = await markdownFiles(cwd, on);
@@ -170,12 +210,16 @@ export default class MdBrowser extends View {
       } catch (e) {
         if (this.context === context) this.listError = String(e?.message ?? e);
       } finally {
-        if (this.context === context) this.loading = false;
+        if (this.context === context) {
+          this.loading = false;
+          if (this.again) this.refreshList(cx);
+        }
         cx.notify();
       }
     });
   }
 
+  // A watch that fails (the folder went away, too many watchers) is retried a while later.
   watch(root, cx) {
     if (this.watching?.root === root) return;
     const watching = (this.watching = { root });
@@ -183,10 +227,13 @@ export default class MdBrowser extends View {
       try {
         while (this.watching === watching) {
           const changed = await watchFolder(root);
-          if (this.watching === watching && changed.some((p) => MARKDOWN.test(p))) this.refreshList(cx);
+          if (this.watching === watching && changed.some((p) => MARKDOWN.test(p) || IGNORES.test(p))) this.refreshList(cx);
         }
       } catch {
-        if (this.watching === watching) this.watching = null;
+        if (this.watching !== watching) return;
+        this.watching = null;
+        await cx.sleep(10000);
+        if (this.watching === null) this.refreshList(cx);
       }
     });
   }
@@ -196,8 +243,8 @@ export default class MdBrowser extends View {
     if (this.file) {
       const want = shown(this.slot);
       if (want && (want.file !== this.file || (want.on ?? null) !== this.on)) this.show(want, cx);
-      const pane = this.paneId();
-      if (pane && shared(LAST) !== pane && panes().find((p) => p.pane === pane)?.focused) setShared(LAST, pane);
+      const pane = this.paneId(), me = pane && panes().find((p) => p.pane === pane);
+      if (me?.focused && lastByTab()[me.tab] !== pane) setShared(LAST, { ...lastByTab(), [me.tab]: pane });
       return this.pane();
     }
     const { cwd, on } = this.where();
@@ -217,7 +264,7 @@ export default class MdBrowser extends View {
     return v_flex().w_full().p(4).gap(4).bg(t.popover).text_color(t.foreground).text_size(12.5)
       .child(item("mow-preview", "Preview in new pane", true, (_e, cx) => {
         cx.spawn(async (cx) => {
-          await this.preview(this.file, this.on, cx, true);
+          await this.queuePreview(this.file, this.on, cx, true);
           closeOverlay(this.overlay);
         });
       }))
@@ -250,10 +297,10 @@ export default class MdBrowser extends View {
     const height = 12 + 32 * 2;
     const rows = this.files.slice(0, LIMIT).map((rel) => {
       const cut = Math.max(rel.lastIndexOf("/"), rel.lastIndexOf("\\"));
-      const file = `${this.root}/${rel}`;
+      const file = join(this.root, rel);
       return h_flex().id(`mow-file-${rel}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => cx.spawn((cx) => this.preview(file, this.on, cx)))
+        .on_click((_e, cx) => cx.spawn((cx) => this.queuePreview(file, this.on, cx)))
         .on_mouse_down("right", (_e, cx) => {
           cx.stop_propagation();
           openOverlay({ mod: "md-browser", kind: "popup", height, props: { file, on: this.on } });
@@ -268,7 +315,11 @@ export default class MdBrowser extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Markdown"))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim)
-          .child(this.root?.split(/[\\/]/).pop() ?? "")))
+          .child(this.root?.split(/[\\/]/).filter(Boolean).pop() ?? (this.root ? "/" : "")))
+        .child(div().id("mow-refresh").flex_none().px(4).rounded(5).text_color(t.dim).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click((_e, cx) => this.refreshList(cx))
+          .child("↻")))
       .child(v_flex().id("mow-files").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(rows)
         .when(Boolean(empty), (el) => el.child(div().p(8).text_size(12).text_color(t.dim).child(empty)))
         .when(this.files.length > LIMIT, (el) => el.child(div().p(8).text_size(11).text_color(t.dim)
