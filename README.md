@@ -68,11 +68,16 @@ Move it, or give it an `"id"` (say `"markdown"`) and bind `layout.toggle` in
 
 ## Key
 
-In `~/.config/herdr-app/keys.json`:
+The repo's `keys.json` has the key the mod expects. Herdr reads only your own
+`~/.config/herdr-app/keys.json`, so installing the mod doesn't bind it: merge the
+`"mod:markdown-browser"` section into yours (if you already use the key there, pick another):
 
 ```json
-{ "mod:markdown-browser": { "cmd-shift-o": "markdown-browser.open" } }
+{ "mod:markdown-browser": { "cmd-shift-o": "markdown-browser.open", "ctrl-shift-o": "markdown-browser.open" } }
 ```
+
+`cmd-shift-o` is for macOS, `ctrl-shift-o` for Windows and Linux. A `mod:` section only applies
+while a preview has the keyboard, so it doesn't take the key from terminals.
 
 With a preview pane focused, the key opens its file in the default app. It works in previews
 opened from the panel, not in one opened from a shell (below): a mod pane isn't told its own

@@ -1,0 +1,6 @@
+{
+  "mod:markdown-browser": {
+    "cmd-shift-o": "markdown-browser.open",
+    "ctrl-shift-o": "markdown-browser.open"
+  }
+}
