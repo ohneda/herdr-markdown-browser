@@ -11,16 +11,16 @@ import { MARKDOWN, LIMIT, location, markdownFiles, join } from "./list.js";
 
 // Previews opened from the list: { pane id: slot }, and what each slot shows now
 // ({ slot: { file, on } }; without one, its props' file).
-const SLOTS = "md-browser.slots";
-const SHOW = "md-browser.show";
+const SLOTS = "markdown-browser.slots";
+const SHOW = "markdown-browser.show";
 // The preview pane focused last in each tab ({ tab: pane id }): a click in the list shows its
 // file there.
-const LAST = "md-browser.last";
+const LAST = "markdown-browser.last";
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
 const lastByTab = () => { const v = shared(LAST); return v && typeof v === "object" ? v : {}; };
 // The preview a click in the list replaces: the tab's focused one, else its last, else any.
 function tabPreview(tab) {
-  const previews = panes().filter((p) => p.tab === tab && p.mod === "md-browser");
+  const previews = panes().filter((p) => p.tab === tab && p.mod === "markdown-browser");
   return previews.find((p) => p.focused) ?? previews.find((p) => p.pane === lastByTab()[tab]) ?? previews[0] ?? null;
 }
 // What decides the list besides Markdown files themselves.
@@ -40,7 +40,7 @@ function prose(text, file) {
   }).join("\n");
 }
 
-export default class MdBrowser extends View {
+export default class MarkdownBrowser extends View {
   init(_props, cx) {
     const { file, on, overlay } = props() ?? {};
     this.file = file ?? null;
@@ -55,7 +55,7 @@ export default class MdBrowser extends View {
     this.show(shown(this.slot) ?? { file: this.file, on: this.on }, cx);
     // watchFolder only sees this machine: another's, look again now and then (one read at a time).
     cx.timer.every(3000, (cx) => { if (this.on && !this.reading) this.load(cx); });
-    // "md-browser.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
+    // "markdown-browser.open" in keys.json: the default app. It reaches every shown copy; the focused one acts.
     cx.spawn(async () => {
       for (;;) {
         const c = await nextCommand();
@@ -156,12 +156,12 @@ export default class MdBrowser extends View {
 
     const before = new Set(panes().map((p) => p.pane));
     const fresh = { slot: Math.random().toString(36).slice(2, 10) + Date.now().toString(36) };
-    run("pane.split", { direction: "right", pane: old?.pane, mod: "md-browser", props: { file, on, slot: fresh.slot } });
+    run("pane.split", { direction: "right", pane: old?.pane, mod: "markdown-browser", props: { file, on, slot: fresh.slot } });
     const until = async (test) => {
       for (let i = 0; i < 40; i++) { if (test()) return true; await cx.sleep(25); }
       return false;
     };
-    if (!await until(() => (fresh.pane = panes().find((p) => !before.has(p.pane) && p.tab === tab && p.mod === "md-browser")?.pane))) return;
+    if (!await until(() => (fresh.pane = panes().find((p) => !before.has(p.pane) && p.tab === tab && p.mod === "markdown-browser")?.pane))) return;
     // Record the new pane's slot, forgetting closed panes'.
     const alive = new Set(panes().map((p) => p.pane));
     const slots = Object.fromEntries(Object.entries(shared(SLOTS) ?? {}).filter(([pane]) => alive.has(pane)));
@@ -281,7 +281,7 @@ export default class MdBrowser extends View {
   pane() {
     const t = theme();
     const name = this.file.split(/[\\/]/).pop();
-    return v_flex().id("md-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground)
+    return v_flex().id("markdown-browser").size_full().min_h(0).bg(t.background).text_color(t.foreground)
       .child(h_flex().h(32).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border).text_size(12)
         .child(div().font_semibold().truncate().child(name))
         .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(this.on ? `${this.on}:${this.file}` : this.file))
@@ -317,7 +317,7 @@ export default class MdBrowser extends View {
         .on_click((_e, cx) => cx.spawn((cx) => this.queuePreview(file, this.on, cx)))
         .on_mouse_down("right", (_e, cx) => {
           cx.stop_propagation();
-          openOverlay({ mod: "md-browser", kind: "popup", height, props: { file, on: this.on } });
+          openOverlay({ mod: "markdown-browser", kind: "popup", height, props: { file, on: this.on } });
         })
         .child(div().min_w(0).truncate().when(on, (el) => el.font_semibold()).child(rel.slice(cut + 1)))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(cut < 0 ? "" : rel.slice(0, cut)));
@@ -325,7 +325,7 @@ export default class MdBrowser extends View {
     const empty = this.listError || (this.loading && !this.files.length ? "Loading…"
       : !this.cwd ? "No folder" : !this.files.length ? "No Markdown files" : !matches.length ? "No matches" : null);
     const folder = this.root?.split(/[\\/]/).filter(Boolean).pop() ?? (this.root ? "/" : "");
-    return v_flex().id("md-browser-list").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
+    return v_flex().id("markdown-browser-list").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background)
       .border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Markdown"))

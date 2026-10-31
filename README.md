@@ -1,4 +1,4 @@
-# md-browser
+# markdown-browser
 
 A [Herdr](https://herdr.dev) mod: find the Markdown files you're working on, preview them in a
 pane, and open them in your system's default app for Markdown, on macOS, Windows and Linux.
@@ -24,15 +24,15 @@ handed to the default app: it runs on this computer.
 
 ## Install
 
-Copy `mods/md-browser/` to `~/.config/herdr-app/mods/`, then:
+Copy `mods/markdown-browser/` to `~/.config/herdr-app/mods/`, then:
 
 ```sh
-herdr-app check ~/.config/herdr-app/mods/md-browser
+herdr-app check ~/.config/herdr-app/mods/markdown-browser
 ```
 
 The first time Herdr sees the folder, it docks the Markdown panel at the right edge of the
 shown layout, 300 px wide. After that your layout decides: drag its edge to resize it, or move
-the block in `layouts/<name>.json` (it's the block with `"content": { "mod": "md-browser" }`).
+the block in `layouts/<name>.json` (it's the block with `"content": { "mod": "markdown-browser" }`).
 
 To show and hide it with a key, give that block an `"id"` (say `"markdown"`; on a shipped
 layout, clone it first: `herdr-app do layout.clone '{"name":"main","as":"my-main"}'`) and bind
@@ -47,7 +47,7 @@ layout, clone it first: `herdr-app do layout.clone '{"name":"main","as":"my-main
 In `~/.config/herdr-app/keys.json`:
 
 ```json
-{ "mod:md-browser": { "cmd-shift-o": "md-browser.open" } }
+{ "mod:markdown-browser": { "cmd-shift-o": "markdown-browser.open" } }
 ```
 
 With a preview pane focused, the key opens its file in the default app.
@@ -55,7 +55,7 @@ With a preview pane focused, the key opens its file in the default app.
 ## Open a preview from a shell
 
 ```sh
-herdr-app do pane.split '{"direction":"right","mod":"md-browser","props":{"file":"/path/to/README.md"}}'
+herdr-app do pane.split '{"direction":"right","mod":"markdown-browser","props":{"file":"/path/to/README.md"}}'
 ```
 
 ## Optional: right-click in the Files panel
@@ -72,7 +72,7 @@ Herdr: to pick up a newer Files panel, clone it again and repeat step 2.
    .when(!entry.dir && /\.(md|mdx|markdown)$/i.test(entry.name), el => el.on_mouse_down("right", (_e, cx) => {
      cx.stop_propagation();
      // 12 + 32 per item: Preview in new pane, Open in Default app.
-     openOverlay({ mod: "md-browser", kind: "popup", height: 12 + 32 * 2, props: { file: `${this.root}/${path}`, on: this.on } });
+     openOverlay({ mod: "markdown-browser", kind: "popup", height: 12 + 32 * 2, props: { file: `${this.root}/${path}`, on: this.on } });
    }))
    ```
 
