@@ -69,7 +69,8 @@ pane. The row of the file that preview shows is marked in `selected` with a semi
 Switching files keeps the old text on screen until the new one is read (no flash), then scrolls
 to the top. Clicks are handled one at a time.
 
-**Right-click a row** for the menu. *Preview in new pane* always opens another preview, which
+**Right-click a row** for the menu; the row stays in `hover` color while the menu is open, and
+clears when it closes (an item, Esc, a click beside it). *Preview in new pane* always opens another preview, which
 gets the keyboard and becomes the tab's target. *Open in Default app* hands the file to the
 system's default app for `.md` (`open`, `rundll32 url.dll,FileProtocolHandler`, `xdg-open`),
 only if it is a regular Markdown file: not a folder, and not a `*.md` symlink to a program or
@@ -106,7 +107,9 @@ preview can't be replaced, a warning says it is still open beside the new one.
   `openOverlay`, `closeOverlay`, `notify`, `nextCommand`, `shared` / `setShared`.
 - **Shared state**: `markdown-browser.slots` (`{ pane id: slot }`), `markdown-browser.show`
   (`{ slot: { file, on } }`: what each preview shows), `markdown-browser.last`
-  (`{ tab: pane id }`: the last focused preview per tab).
+  (`{ tab: pane id }`: the last focused preview per tab), `markdown-browser.menu`
+  (`{ file, on }`: whose menu is open; the menu copy sets it in `init` and clears it in
+  `close()`, so the row is marked whoever opened the menu).
 - **gpui**: `TextView.markdown` for the body, `InputState` + `Input` for the filter,
   `v_virtual_list` + `VirtualListScrollHandle` + `Scrollbar.vertical` for the rows.
 - No art, fonts or network.
@@ -125,6 +128,8 @@ preview can't be replaced, a warning says it is still open beside the new one.
 - **`run()` doesn't wait** for the command to land: poll (`cx.sleep(25)`, up to a second) for
   the new pane, then for its focus, before the next step. Serialize clicks, or two splits each
   take the other's pane.
+- **`openOverlay` doesn't use `mod.json`'s `overlay` size**: pass `width: 220` and
+  `height: 76` with every call, or the menu opens far wider than its items.
 - **Closing a popup ends its tasks**: close the menu only after the preview or the app command
   has started, not when the item is pressed.
 - **Rows in a virtual list can't take `on_click`**: use the list's `on_item_click` and

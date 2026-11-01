@@ -16,6 +16,8 @@ const SHOW = "markdown-browser.show";
 // The preview pane focused last in each tab ({ tab: pane id }): a click in the list shows its
 // file there.
 const LAST = "markdown-browser.last";
+// The file whose right-click menu is open ({ file, on }): its row stays marked meanwhile.
+const MENU_FOR = "markdown-browser.menu";
 const shown = (slot) => (slot && shared(SHOW)?.[slot]) || null;
 const lastByTab = () => { const v = shared(LAST); return v && typeof v === "object" ? v : {}; };
 // The preview a click in the list replaces: the tab's focused one, else its last, else any.
@@ -25,9 +27,10 @@ function tabPreview(tab) {
 }
 // What decides the list besides Markdown files themselves.
 const IGNORES = /(^|[\\/])\.gitignore$/;
-// A list row, and the right-click menu: 12 + 32 per item (Preview in new pane, Open in Default app).
+// A list row, and the right-click menu: 220 wide (openOverlay doesn't take mod.json's width),
+// 12 + 32 per item tall (Preview in new pane, Open in Default app).
 const ROW = 28;
-const MENU = 12 + 32 * 2;
+const MENU = { width: 220, height: 12 + 32 * 2 };
 // The home folder, or one that holds it ("/", "/Users", "C:\").
 function aboveHome(root) {
   const h = home().replace(/[\\/]+$/, ""), r = root.replace(/[\\/]+$/, "");
@@ -54,7 +57,8 @@ export default class MarkdownBrowser extends View {
     this.file = file ?? null;
     this.on = on ?? null;
     this.overlay = overlay ?? null;
-    if (this.overlay) return;
+    // The menu marks its file's row while open, whoever opened it (the list, a Files clone).
+    if (this.overlay) return void setShared(MENU_FOR, { file: this.file, on: this.on });
     if (!this.file) return this.initList(cx);
 
     // Opened from the list: its slot, which shared SHOW can point at another file.
@@ -76,6 +80,13 @@ export default class MarkdownBrowser extends View {
         if (c === "open" && !this.on && this.isFocused()) this.open();
       }
     });
+  }
+
+  // The menu going (an item, Esc, a click beside it) unmarks its row, unless another menu
+  // has opened since.
+  async close() {
+    const menu = shared(MENU_FOR);
+    if (this.overlay && menu?.file === this.file && (menu.on ?? null) === this.on) setShared(MENU_FOR, null);
   }
 
   // A pane doesn't know its id; the list recorded it for this copy's slot.
@@ -333,12 +344,14 @@ export default class MarkdownBrowser extends View {
     const words = this.query.toLowerCase().split(/\s+/).filter(Boolean);
     const matches = (this.matches = words.length ? this.files.filter((rel) => words.every((w) => rel.toLowerCase().includes(w))) : this.files);
     if (this.at >= matches.length) this.at = Math.max(0, matches.length - 1);
-    // The file a click would replace, marked; the keyboard's row, while the filter has the keyboard.
+    // The file a click would replace, marked; in hover color, the keyboard's row while the filter
+    // has the keyboard, and the row whose menu is open.
     const target = tabPreview(focused()?.tab), current = target && shown(shared(SLOTS)?.[target.pane]);
+    const menu = shared(MENU_FOR);
     const row = (rel, i) => {
       const cut = Math.max(rel.lastIndexOf("/"), rel.lastIndexOf("\\"));
       const on = current?.file === join(this.root, rel) && (current.on ?? null) === this.on;
-      const at = this.typing && i === this.at;
+      const at = (this.typing && i === this.at) || (menu?.file === join(this.root, rel) && (menu.on ?? null) === this.on);
       return h_flex().h(ROW).px(8).gap(8).items_center().rounded(7).cursor_pointer()
         .when(on || at, (el) => el.bg(on ? t.selected : t.hover))
         .hover((s) => s.bg(on ? t.selected : t.hover))
@@ -382,7 +395,7 @@ export default class MarkdownBrowser extends View {
             .on_item_click((rel, cx) => cx.spawn((cx) => this.queuePreview(join(this.root, rel), this.on, cx)))
             .on_item_secondary_click((rel, _e, cx) => {
               cx.stop_propagation();
-              openOverlay({ mod: "markdown-browser", kind: "popup", height: MENU, props: { file: join(this.root, rel), on: this.on } });
+              openOverlay({ mod: "markdown-browser", kind: "popup", ...MENU, props: { file: join(this.root, rel), on: this.on } });
             }))
           .child(Scrollbar.vertical("mb-files").absolute().inset_0()));
   }

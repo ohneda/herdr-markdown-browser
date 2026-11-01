@@ -14,7 +14,7 @@ pane, and open them in your system's default app for Markdown, on macOS, Windows
   the chosen one, and Esc clears it. The file the tab's preview shows is highlighted.
 - **Click** a file to show it in the tab's preview pane (the focused one, else the one focused
   last; a new one if the tab has none). **Right-click** for *Preview in new pane* and
-  *Open in Default app*.
+  *Open in Default app*; the row stays highlighted while the menu is open.
 - **Preview pane**: renders the file and reloads it when it changes. Front matter is hidden,
   and in `.mdx` files so are top-level `import` / `export` lines (not those in code blocks).
   Its header has a *Default app* button.
@@ -115,8 +115,8 @@ Herdr: to pick up a newer Files panel, clone it again and repeat step 2.
    ```js
    .when(!entry.dir && /\.(md|mdx|markdown)$/i.test(entry.name), el => el.on_mouse_down("right", (_e, cx) => {
      cx.stop_propagation();
-     // 12 + 32 per item: Preview in new pane, Open in Default app.
-     openOverlay({ mod: "markdown-browser", kind: "popup", height: 12 + 32 * 2, props: { file: `${this.root}/${path}`, on: this.on } });
+     // 220 wide; 12 + 32 per item tall: Preview in new pane, Open in Default app.
+     openOverlay({ mod: "markdown-browser", kind: "popup", width: 220, height: 12 + 32 * 2, props: { file: `${this.root}/${path}`, on: this.on } });
    }))
    ```
 
