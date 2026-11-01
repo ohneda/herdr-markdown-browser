@@ -4,7 +4,9 @@ A panel at the right edge of the window lists the Markdown files of the project 
 terminal is in. Click one and it renders in a preview pane beside your terminals; click another
 and the same preview switches to it. Right-click a file to preview it in a new pane or open it
 in the system's default app for Markdown. Works on macOS, Windows and Linux, and lists and
-previews files on other machines too.
+previews files on other machines too. The panel can also sit beside Files and Changes in the
+top bar's side panel, through clones of Herdr's tab bar and main layout (`docs/top-bar.md`):
+the screenshot shows it there.
 
 ![Markdown Browser](preview.png)
 
@@ -112,7 +114,10 @@ preview can't be replaced, a warning says it is still open beside the new one.
   `close()`, so the row is marked whoever opened the menu).
 - **gpui**: `TextView.markdown` for the body, `InputState` + `Input` for the filter,
   `v_virtual_list` + `VirtualListScrollHandle` + `Scrollbar.vertical` for the rows.
-- No art, fonts or network.
+- **Art**: `markdown.svg`, a 24 px stroke icon in `currentColor` (a frame holding an "M" and a
+  down arrow). The mod's own code doesn't draw it: it is the top-bar button's icon in
+  `docs/top-bar.md`, referenced as `mods/markdown-browser/markdown.svg`.
+- No fonts, no network.
 
 ## Watch out
 
@@ -146,7 +151,8 @@ preview can't be replaced, a warning says it is still open beside the new one.
   checked path (not the original) handed to the app. `find` output must be NUL-separated.
 - Herdr's own Files panel has no right-click hook, and its tab bar's Files / Changes buttons are
   fixed: this panel can't join that stack without cloning shipped mods. The README documents an
-  optional Files-panel clone; the mod doesn't depend on it.
+  optional Files-panel clone, and `docs/top-bar.md` a Markdown button in clones of `tabs` and
+  `main` (using the mod's `markdown.svg`); the mod depends on neither.
 - Herdr reads only the person's `keys.json`: the repo's must be merged by hand.
 - The Windows paths (PowerShell listing, file check, `rundll32`) haven't been run on a Windows
   machine.

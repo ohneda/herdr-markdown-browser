@@ -2,6 +2,9 @@
 
 ![Markdown Browser](preview.png)
 
+*The screenshot shows the panel beside Files and Changes in the top bar, set up with
+[docs/top-bar.md](docs/top-bar.md). Installed on its own, it docks at the window's right edge.*
+
 A [Herdr](https://herdr.dev) mod: find the Markdown files you're working on, preview them in a
 pane, and open them in your system's default app for Markdown, on macOS, Windows and Linux.
 
@@ -67,6 +70,10 @@ Move it, or give it an `"id"` (say `"markdown"`) and bind `layout.toggle` in
 ```json
 { "global": { "cmd-shift-m": "layout.toggle:markdown" } }
 ```
+
+To have it beside **Files** and **Changes** in the top bar instead, opening in their side panel,
+follow [docs/top-bar.md](docs/top-bar.md): it adds a **Markdown** button to clones of Herdr's tab
+bar and main layout.
 
 ## Key
 
